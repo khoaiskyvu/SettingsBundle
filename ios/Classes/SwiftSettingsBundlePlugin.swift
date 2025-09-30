@@ -24,8 +24,12 @@ public class SwiftSettingsBundlePlugin: NSObject, FlutterPlugin, FlutterStreamHa
     }
 
     public func onCancel(withArguments arguments: Any?) -> FlutterError? {
+        NotificationCenter.default.removeObserver(self, name: UserDefaults.didChangeNotification, object: nil)
         eventSink = nil
         return nil
+    }
+    deinit {
+        NotificationCenter.default.removeObserver(self, name: UserDefaults.didChangeNotification, object: nil)
     }
 
     func registerDefaultsFromSettingsBundle() {
@@ -61,7 +65,7 @@ public class SwiftSettingsBundlePlugin: NSObject, FlutterPlugin, FlutterStreamHa
             if let args = call.arguments as? Dictionary<String, String>,
                let _key = args["key"] {
                 if let data = UserDefaults.standard.value(forKey: _key) {
-                    result(data)
+                    result(normalize(data) ?? NSNull())
                 } else {
                     result(FlutterError(code: "-404", message: "Not found", details: nil))
                 }
@@ -85,6 +89,55 @@ public class SwiftSettingsBundlePlugin: NSObject, FlutterPlugin, FlutterStreamHa
 
     @objc private func updateDisplayFromDefaults() {
         guard let eventSink = eventSink else { return }
-        eventSink(UserDefaults.standard.dictionaryRepresentation())
+        let payload = filteredDefaults()
+        if Thread.isMainThread {
+            eventSink(payload)
+        } else {
+            DispatchQueue.main.async { eventSink(payload) }
+        }
     }
+
+    private func filteredDefaults() -> [String: Any] {
+        let bundlePrefix = (Bundle.main.bundleIdentifier ?? "") + "."
+        let raw = UserDefaults.standard.dictionaryRepresentation()
+        var sanitized: [String: Any] = [:]
+
+        for (key, value) in raw {
+            guard key.hasPrefix(bundlePrefix) || key.hasPrefix("sb_") else { continue }
+            if let safe = normalize(value) {
+                sanitized[key] = safe
+            }
+        }
+        return sanitized
+    }
+
+    private func normalize(_ value: Any) -> Any? {
+        switch value {
+        case let string as String:
+            return string
+        case let number as NSNumber:
+            return number
+        case let date as Date:
+            return date.timeIntervalSince1970
+        case let url as URL:
+            return url.absoluteString
+        case let data as Data:
+            return data.base64EncodedString()
+        case let array as [Any]:
+            return array.compactMap { normalize($0) }
+        case let dict as [String: Any]:
+            var normalized: [String: Any] = [:]
+            for (k, v) in dict {
+                if let safe = normalize(v) {
+                    normalized[k] = safe
+                }
+            }
+            return normalized
+        case _ as NSNull:
+            return NSNull()
+        default:
+            return nil
+        }
+    }
+
 }
