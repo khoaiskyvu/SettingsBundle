@@ -86,7 +86,6 @@ public class SwiftSettingsBundlePlugin: NSObject, FlutterPlugin, FlutterStreamHa
     @objc private func updateDisplayFromDefaults() {
         guard let eventSink = eventSink else { return }
         let data = filteredDefaults()
-        print(data)
         eventSink(data)
     }
     
