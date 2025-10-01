@@ -24,12 +24,8 @@ public class SwiftSettingsBundlePlugin: NSObject, FlutterPlugin, FlutterStreamHa
     }
 
     public func onCancel(withArguments arguments: Any?) -> FlutterError? {
-        NotificationCenter.default.removeObserver(self, name: UserDefaults.didChangeNotification, object: nil)
         eventSink = nil
         return nil
-    }
-    deinit {
-        NotificationCenter.default.removeObserver(self, name: UserDefaults.didChangeNotification, object: nil)
     }
 
     func registerDefaultsFromSettingsBundle() {
@@ -65,7 +61,7 @@ public class SwiftSettingsBundlePlugin: NSObject, FlutterPlugin, FlutterStreamHa
             if let args = call.arguments as? Dictionary<String, String>,
                let _key = args["key"] {
                 if let data = UserDefaults.standard.value(forKey: _key) {
-                    result(normalize(data) ?? NSNull())
+                    result(data)
                 } else {
                     result(FlutterError(code: "-404", message: "Not found", details: nil))
                 }
@@ -89,56 +85,62 @@ public class SwiftSettingsBundlePlugin: NSObject, FlutterPlugin, FlutterStreamHa
 
     @objc private func updateDisplayFromDefaults() {
         guard let eventSink = eventSink else { return }
-        let payload = filteredDefaults()
-        if Thread.isMainThread {
-            eventSink(payload)
-        } else {
-            DispatchQueue.main.async { eventSink(payload) }
-        }
+        let data = filteredDefaults()
+        print(data)
+        eventSink(data)
     }
-
+    
     private func filteredDefaults() -> [String: Any] {
-        let bundlePrefix = (Bundle.main.bundleIdentifier ?? "") + "."
         let raw = UserDefaults.standard.dictionaryRepresentation()
         var sanitized: [String: Any] = [:]
-
+    
+        let keys = settingsBundleKeys()
+        
         for (key, value) in raw {
-            guard key.hasPrefix(bundlePrefix) || key.hasPrefix("sb_") else { continue }
-            if let safe = normalize(value) {
-                sanitized[key] = safe
-            }
+            guard keys.contains(key) else { continue }
+            sanitized[key] = value
         }
         return sanitized
     }
+    
+    private func settingsBundleKeys() -> [String] {
+            let settingsName = "Settings"
+            let settingsExtension = "bundle"
+            let settingsRootPlist = "Root.plist"
+            let settingsPreferencesItems = "PreferenceSpecifiers"
 
-    private func normalize(_ value: Any) -> Any? {
-        switch value {
-        case let bool as Bool:
-            return bool
-        case let string as String:
-            return string
-        case let number as NSNumber:
-            return number
-        case let date as Date:
-            return date.timeIntervalSince1970
-        case let url as URL:
-            return url.absoluteString
-        case let data as Data:
-            return data.base64EncodedString()
-        case let array as [Any]:
-            return array.compactMap { normalize($0) }
-        case let dict as [String: Any]:
-            var normalized: [String: Any] = [:]
-            for (k, v) in dict {
-                if let safe = normalize(v) {
-                    normalized[k] = safe
+            guard let settingsBundleURL = Bundle.main.url(forResource: settingsName, withExtension: settingsExtension) else {
+                return []
+            }
+
+            var seen = Set<String>()
+
+            func collectKeys(from plistURL: URL) {
+                guard
+                    let data = try? Data(contentsOf: plistURL),
+                    let plist = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil) as? [String: Any],
+                    let prefs = plist[settingsPreferencesItems] as? [[String: Any]]
+                else { return }
+
+                for pref in prefs {
+                    if let key = pref["Key"] as? String, !key.isEmpty {
+                        seen.insert(key)
+                    }
+                    // Nếu có child pane → đệ quy đọc thêm file .plist con
+                    if let type = pref["Type"] as? String, type == "PSChildPaneSpecifier" {
+                        let fileBase =
+                            (pref["File"] as? String) ??
+                            (pref["FileName"] as? String) ?? ""   // phòng trường hợp vài template dùng "FileName"
+                        if !fileBase.isEmpty {
+                            let childName = fileBase.hasSuffix(".plist") ? fileBase : fileBase + ".plist"
+                            let childURL = settingsBundleURL.appendingPathComponent(childName)
+                            collectKeys(from: childURL)
+                        }
+                    }
                 }
             }
-            return normalized
-        case _ as NSNull:
-            return NSNull()
-        default:
-            return nil
+
+            collectKeys(from: settingsBundleURL.appendingPathComponent(settingsRootPlist))
+            return Array(seen)
         }
-    }
 }
