@@ -113,6 +113,8 @@ public class SwiftSettingsBundlePlugin: NSObject, FlutterPlugin, FlutterStreamHa
 
     private func normalize(_ value: Any) -> Any? {
         switch value {
+        case let bool as Bool:
+            return bool
         case let string as String:
             return string
         case let number as NSNumber:
@@ -139,5 +141,4 @@ public class SwiftSettingsBundlePlugin: NSObject, FlutterPlugin, FlutterStreamHa
             return nil
         }
     }
-
 }
